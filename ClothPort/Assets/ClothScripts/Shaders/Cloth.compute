@@ -1,0 +1,31 @@
+#pragma kernel Integrate
+
+#include "ClothCommon.hlsl"
+
+
+RWStructuredBuffer<Particle> Particles;
+
+float dt;
+float3 gravity;
+uint numParticles;
+
+[numthreads(256, 1, 1)]
+void Integrate(uint id : SV_DispatchThreadID)
+{
+    if (id >= numParticles)
+        return;
+    
+    Particle p = Particles[id];
+
+    if (p.invMass == 0)
+        return;
+
+    if (length(gravity) > 0.0001)
+        p.velocity += gravity * dt;
+
+    p.prevPosition = p.position;
+
+    p.position += p.velocity * dt;
+
+    Particles[id] = p;
+}

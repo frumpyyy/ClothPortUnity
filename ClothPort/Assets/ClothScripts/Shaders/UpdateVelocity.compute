@@ -1,0 +1,61 @@
+#pragma kernel UpdateVelocity
+
+#include "ClothCommon.hlsl"
+
+RWStructuredBuffer<Particle> Particles;
+
+uint numParticles;
+uint numSubSteps;
+float dt;
+float friction;
+float damping;
+
+[numthreads(256, 1, 1)]
+void UpdateVelocity(uint id : SV_DispatchThreadID)
+{
+    if (id >= numParticles)
+        return;
+
+    Particle p = Particles[id];
+    if (p.invMass == 0.0f)
+    {
+        p.velocity = float3(0, 0, 0);
+        Particles[id] = p;
+        return;
+    }
+
+    float invDt = numSubSteps / dt;
+
+    float3 newVel = (p.position - p.prevPosition) * invDt;
+    p.prevPosition = p.position;
+
+    float lenN = length(p.prevCollisionNormal);
+    float3 N = (lenN > 0.0f) ? (p.prevCollisionNormal / lenN) : float3(0, 0, 0);
+
+    p.prevCollisionNormal = float3(0, 0, 0);
+
+    if (lenN > 0.0f)
+    {
+        float vn = dot(newVel, N);
+        float3 vN = vn * N;
+        float3 vT = newVel - vN;
+
+        float vtLen = length(vT);
+        float maxFriction = friction * abs(vn);
+
+        if (vtLen <= maxFriction)
+            vT = float3(0, 0, 0);
+        else
+            vT *= max(0.0f, 1.0f - maxFriction / vtLen);
+
+        newVel = vN + vT;
+    }
+
+    newVel *= exp(-damping * (dt / numSubSteps));
+
+    p.velocity = newVel;
+    
+
+    
+    Particles[id] = p;
+}

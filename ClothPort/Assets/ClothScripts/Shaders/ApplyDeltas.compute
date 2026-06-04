@@ -1,0 +1,36 @@
+#pragma kernel ApplyDeltas
+
+#include "ClothCommon.hlsl"
+
+
+RWStructuredBuffer<Particle> Particles;
+RWByteAddressBuffer PositionDeltas;
+
+
+uint numParticles;
+
+[numthreads(256, 1, 1)]
+void ApplyDeltas(uint id : SV_DispatchThreadID)
+{
+    if (id >= numParticles)
+        return;
+
+    Particle p = Particles[id];
+    float3 d;
+    d.x = asfloat(PositionDeltas.Load(AddressOf(id, 0)));
+    float jitter = (frac(sin(id * 12.9898f) * 43758.5453f) - 0.5f) * 1e-4;
+    d.y = asfloat(PositionDeltas.Load(AddressOf(id, 1)));
+    d.z = asfloat(PositionDeltas.Load(AddressOf(id, 2)));
+
+    d.z += jitter / 10.0f;
+    
+    if (p.invMass != 0)
+        p.position += d;
+    
+
+    PositionDeltas.Store(AddressOf(id, 0), asuint(0.0f));
+    PositionDeltas.Store(AddressOf(id, 1), asuint(0.0f));
+    PositionDeltas.Store(AddressOf(id, 2), asuint(0.0f));
+
+    Particles[id] = p;
+}

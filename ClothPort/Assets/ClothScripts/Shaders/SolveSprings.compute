@@ -1,0 +1,86 @@
+#pragma kernel SolveSprings
+
+#include "ClothCommon.hlsl"
+
+RWStructuredBuffer<Particle> Particles;
+RWStructuredBuffer<Spring> Springs;
+RWByteAddressBuffer PositionDeltas;
+
+
+void AtomicAddFloat(uint addr, float value)
+{
+    uint expected = PositionDeltas.Load(addr);
+    for (;;)
+    {
+        float oldVal = asfloat(expected);
+        float newVal = oldVal + value;
+        uint desired = asuint(newVal);
+
+        uint original;
+        PositionDeltas.InterlockedCompareExchange(addr, expected, desired, original);
+
+        if (original == expected)
+            break;
+
+        expected = original;
+    }
+}
+void AtomicAddFloat3(uint index, float3 v)
+{
+    AtomicAddFloat(AddressOf(index, 0), v.x);
+    AtomicAddFloat(AddressOf(index, 1), v.y);
+    AtomicAddFloat(AddressOf(index, 2), v.z);
+}
+
+uint numSprings;
+float dt;
+float compliance;
+float damping;
+
+[numthreads(256, 1, 1)]
+void SolveSprings(uint id : SV_DispatchThreadID)
+{
+    if (id >= numSprings)
+        return;
+
+    Spring s = Springs[id];
+
+    Particle a = Particles[s.particleA];
+    Particle b = Particles[s.particleB];
+
+    float3 diff = b.position - a.position;
+    float dist = length(diff);
+    if (dist < 1e-6f)
+        return;
+
+    float3 dir = diff / dist;
+    
+    float C = dist - s.restingLength;
+    
+    float w1 = a.invMass;
+    float w2 = b.invMass;
+    float wsum = w1 + w2;
+    
+    if (wsum == 0)
+        return;
+    
+    float alpha = (s.compliance * compliance) / (dt * dt);
+
+    float gamma = damping;
+    
+    float denom = wsum + alpha;
+    if (denom == 0)
+        return;
+    
+    float lambdaChange = (-C - alpha * s.lambda) / denom;
+    s.lambda += lambdaChange;
+    
+          
+    float3 corrA = w1 * lambdaChange * -dir;
+    float3 corrB = w2 * lambdaChange * dir;
+    
+    AtomicAddFloat3(s.particleA, corrA);
+    AtomicAddFloat3(s.particleB, corrB);
+
+    Springs[id] = s;
+}
