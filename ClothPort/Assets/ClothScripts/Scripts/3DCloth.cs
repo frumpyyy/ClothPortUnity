@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Unity.Mathematics;
 using Unity.VisualScripting;
+using UnityEditor.ShaderGraph;
 using UnityEngine;
 
 public class GPUCloth : MonoBehaviour
@@ -12,6 +13,7 @@ public class GPUCloth : MonoBehaviour
     public ComputeShader deltasCompute;
     public ComputeShader resetLamdaCompute;
     public ComputeShader velocityCompute;
+    public ComputeShader normalsCompute;
 
 
     public int Width = 30;
@@ -32,6 +34,8 @@ public class GPUCloth : MonoBehaviour
     ComputeBuffer springBuffer;
 
     ComputeBuffer deltaBuffer;
+
+    ComputeBuffer normalBuffer;
 
     public int Iterations = 8;
     public int Substeps = 2;
@@ -54,6 +58,7 @@ public class GPUCloth : MonoBehaviour
 
         clothMaterial.SetBuffer("Particles", particleBuffer);
         clothMaterial.SetBuffer("Indices", indexBuffer);
+        clothMaterial.SetBuffer("Normals", normalBuffer);
 
         Debug.Log(Marshal.SizeOf<Spring>());
         Debug.Log(Marshal.SizeOf<Particle>());
@@ -88,6 +93,7 @@ public class GPUCloth : MonoBehaviour
         deltaBuffer?.Release();
         indexBuffer?.Release();
         drawArgsBuffer?.Release();
+        normalBuffer?.Release();
     }
 
     void CreateRenderBuffers()
@@ -167,6 +173,8 @@ public class GPUCloth : MonoBehaviour
         float[] zeros = new float[Width * Height * 3];
 
         deltaBuffer.SetData(zeros);
+
+        normalBuffer = new ComputeBuffer(Width * Height, sizeof(float) * 3);
 
     }
 
@@ -347,6 +355,27 @@ public class GPUCloth : MonoBehaviour
 
             #endregion ResetLamda
 
+            #region calculateNormals
+
+            int normalKernel = normalsCompute.FindKernel("NormalCalc");
+
+            normalsCompute.SetBuffer(normalKernel, "Particles", particleBuffer);
+
+            normalsCompute.SetBuffer(normalKernel, "OutNormals", normalBuffer);
+
+            normalsCompute.SetInt("numParticles", Width * Height);
+
+            normalsCompute.SetInt("clothWidth", Width);
+
+            normalsCompute.SetInt("clothHeight", Height);
+
+            //shader dispatch group sizing
+            int particleGroups = Mathf.CeilToInt(Width * Height / 256.0f);
+
+            normalsCompute.Dispatch(normalKernel, particleGroups, 1, 1);
+
+            #endregion calculateNormals
+
             #region Integrate
             int kernel = integrateCompute.FindKernel("Integrate");
 
@@ -359,9 +388,6 @@ public class GPUCloth : MonoBehaviour
             integrateCompute.SetInt("numParticles", Width * Height);
 
             integrateCompute.SetVector("gravity", gravity);
-
-            //shader dispatch group sizing
-            int particleGroups = Mathf.CeilToInt(Width * Height / 256.0f);
 
             //diatpch integration shader
             integrateCompute.Dispatch(kernel, particleGroups, 1, 1);

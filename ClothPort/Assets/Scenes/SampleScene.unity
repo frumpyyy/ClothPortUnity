@@ -480,6 +480,7 @@ MonoBehaviour:
   deltasCompute: {fileID: 7200000, guid: d70ac9b848dd76341b82296360823f8b, type: 3}
   resetLamdaCompute: {fileID: 7200000, guid: f1bda20dcf314654f81da1e4eeaca5cd, type: 3}
   velocityCompute: {fileID: 7200000, guid: f2668373ef3265744a7675ca9b54a114, type: 3}
+  normalsCompute: {fileID: 7200000, guid: 0a3299d4cf1fe1343b600ed712f11191, type: 3}
   Width: 30
   Height: 30
   Spacing: 0.1

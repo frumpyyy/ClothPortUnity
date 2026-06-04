@@ -1,0 +1,47 @@
+#pragma kernel NormalCalc
+
+#include "ClothCommon.hlsl"
+
+StructuredBuffer<Particle> Particles;
+RWStructuredBuffer<float3> OutNormals;
+
+uint clothWidth;
+uint clothHeight;
+uint numParticles;
+
+[numthreads(256, 1, 1)]
+void NormalCalc(uint id : SV_DispatchThreadID)
+{
+    if (id >= numParticles)
+        return;
+
+    uint x = id % clothWidth;
+    uint y = id / clothWidth;
+
+    uint xl = (x == 0) ? 0 : x - 1;
+    uint xr = (x == clothWidth - 1) ? (clothWidth - 1) : x + 1;
+    uint yd = (y == 0) ? 0 : y - 1;
+    uint yu = (y == clothHeight - 1) ? (clothHeight - 1) : y + 1;
+
+    float3 p0 = Particles[id].position;
+    float3 pL = Particles[y * clothWidth + xl].position;
+    float3 pR = Particles[y * clothWidth + xr].position;
+    float3 pD = Particles[yd * clothWidth + x].position;
+    float3 pU = Particles[yu * clothWidth + x].position;
+
+    float3 n = 0;
+
+    n += cross(pR - p0, pU - p0);
+    n += cross(pU - p0, pL - p0);
+    n += cross(pL - p0, pD - p0);
+    n += cross(pD - p0, pR - p0);
+    
+    float lenSq = dot(n, n);
+
+    if (lenSq > 1e-12f)
+        n *= rsqrt(lenSq);
+    else
+        n = float3(0, 1, 0);
+
+    OutNormals[id] = -n;
+}

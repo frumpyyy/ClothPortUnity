@@ -29,6 +29,7 @@ Shader "Custom/ClothShader"
             #pragma fragment frag
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             struct Particle
             {
@@ -50,6 +51,7 @@ Shader "Custom/ClothShader"
 
             StructuredBuffer<Particle> Particles;
             StructuredBuffer<uint> Indices;
+            StructuredBuffer<float3> Normals;
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseColor;
@@ -63,6 +65,7 @@ Shader "Custom/ClothShader"
             struct Varyings
             {
                 float4 positionHCS : SV_POSITION;
+                float3 normalWS : TEXCOORD;
             };
 
             Varyings vert(Attributes IN)
@@ -73,14 +76,26 @@ Shader "Custom/ClothShader"
 
                 float3 worldPos = Particles[particleIndex].position;
 
+                float3 normal = Normals[particleIndex];
+
                 OUT.positionHCS = TransformWorldToHClip(worldPos);
+
+                OUT.normalWS = normalize(normal);
 
                 return OUT;
             }
 
-            half4 frag(Varyings IN) : SV_Target
+            half4 frag(Varyings IN, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
-                return _BaseColor;
+                Light mainLight = GetMainLight();
+
+                float3 N = normalize(IN.normalWS);
+
+                if(!isFrontFace) N = -N;
+
+                float NdotL = saturate(dot(N, mainLight.direction));
+
+                return _BaseColor * NdotL;
             }
 
             ENDHLSL
