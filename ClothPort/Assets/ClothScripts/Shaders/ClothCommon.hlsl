@@ -38,6 +38,18 @@ struct Sphere
     float pad1;
 };
 
+struct Capsule
+{
+    float3 hemisphereA;
+    float radius;
+
+    float3 hemisphereB;
+    float pad;
+
+    float3 velocity;
+    float pad1;
+};
+
 
 uint AddressOf(uint index, uint component)
 {

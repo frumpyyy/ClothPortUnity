@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using Unity.VisualScripting;
 using UnityEditor.ShaderGraph;
 using UnityEngine;
+using UnityEngine.Animations;
 
 public class GPUCloth : MonoBehaviour
 {
@@ -14,6 +15,7 @@ public class GPUCloth : MonoBehaviour
     public ComputeShader velocityCompute;
     public ComputeShader normalsCompute;
     public ComputeShader sphereCollisionCompute;
+    public ComputeShader capsuleCollisionCompute;
 
     [SerializeField] private ClothConfig config;
 
@@ -31,10 +33,18 @@ public class GPUCloth : MonoBehaviour
 
     ComputeBuffer sphereBuffer;
 
+    ComputeBuffer capsuleBuffer;
+
     [SerializeField]
     private Material clothMaterial;
 
     private int SphereCounter = 0;
+
+    private Dictionary<SphereCollider, Vector3> _prevSpherePositions = new();
+
+    private int CapsuleCounter = 0;
+
+    private Dictionary<CapsuleCollider, Vector3> _prevCapsulePositions = new();
 
     void Start()
     {
@@ -84,6 +94,7 @@ public class GPUCloth : MonoBehaviour
         drawArgsBuffer?.Release();
         normalBuffer?.Release();
         sphereBuffer?.Release();
+        capsuleBuffer?.Release();
     }
 
     void CreateRenderBuffers()
@@ -337,17 +348,25 @@ public class GPUCloth : MonoBehaviour
         {
             SphereCollider sphereColl = colliders[i];
 
+            Vector3 center = sphereColl.transform.TransformPoint(sphereColl.center);
+
+            Vector3 sphereVelocity = Vector3.zero;
+
+            if (_prevSpherePositions.TryGetValue(sphereColl, out Vector3 prevPos))
+                sphereVelocity = (center - prevPos) / Time.deltaTime;
+
+            _prevSpherePositions[sphereColl] = center;
+
             float sphereScale = Mathf.Max(sphereColl.transform.lossyScale.x,
                 sphereColl.transform.lossyScale.y, sphereColl.transform.lossyScale.z);
 
-            sphereData[i].Center = sphereColl.transform.TransformPoint(sphereColl.center);
+            sphereData[i].Center = center;
 
             sphereData[i].CenterPrevious = sphereData[i].Center;
 
             sphereData[i].radius = sphereColl.radius * sphereScale;
 
-            sphereData[i].velocity = float3.zero; // not integrating velo for now going to get simpler coll working
-
+            sphereData[i].velocity = sphereVelocity;
         }
 
         if (sphereBuffer == null || sphereBuffer.count != Mathf.Max(1, sphereData.Length))
@@ -363,6 +382,76 @@ public class GPUCloth : MonoBehaviour
             SphereCounter = sphereData.Length;
         }
     }
+    void updateCapsuleBuffer()
+    {
+        CapsuleCollider[] colliders = FindObjectsByType<CapsuleCollider>();
+
+        Capsule[] capsuleData = new Capsule[colliders.Length];
+
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            CapsuleCollider capsuleColl = colliders[i];
+
+            Vector3 capsuleCentre = capsuleColl.transform.TransformPoint(capsuleColl.center);
+
+            Vector3 capsuleVelocity = Vector3.zero;
+
+            if (_prevCapsulePositions.TryGetValue(capsuleColl, out Vector3 prevPos))
+                capsuleVelocity = (capsuleCentre - prevPos) / Time.deltaTime;
+
+            _prevCapsulePositions[capsuleColl] = capsuleCentre;
+
+            Vector3 capsuleAxis = capsuleColl.direction switch
+            {
+                0 => capsuleColl.transform.right,
+                1 => capsuleColl.transform.up,
+                2 => capsuleColl.transform.forward,
+                _ => capsuleColl.transform.up //defaulting to up in the case of degenerate collision con
+            };
+
+            Vector3 lossyScale = capsuleColl.transform.lossyScale;
+
+            float capsuleRadius = capsuleColl.direction switch
+            {
+                0 => capsuleColl.radius * Mathf.Max(lossyScale.y, lossyScale.z),
+                1 => capsuleColl.radius * Mathf.Max(lossyScale.x, lossyScale.z),
+                2 => capsuleColl.radius * Mathf.Max(lossyScale.x, lossyScale.y),
+                _ => capsuleColl.radius * Mathf.Max(lossyScale.x, lossyScale.z)
+            };
+
+            float heightScalar = capsuleColl.direction switch
+            {
+                0 => lossyScale.x,
+                1 => lossyScale.y,
+                2 => lossyScale.z,
+                _ => lossyScale.y
+            };
+
+            float capsuleHalfHeight = Mathf.Max(0, capsuleColl.height * heightScalar * 0.5f - capsuleRadius);
+
+            capsuleData[i].hemisphereA = capsuleCentre + capsuleAxis * capsuleHalfHeight;
+
+            capsuleData[i].hemisphereB = capsuleCentre - capsuleAxis * capsuleHalfHeight;
+
+            capsuleData[i].radius = capsuleRadius;
+
+            capsuleData[i].velocity = capsuleVelocity;
+
+        }
+
+        if (capsuleBuffer == null || capsuleBuffer.count != Mathf.Max(1, capsuleData.Length))
+        {
+            capsuleBuffer?.Release();
+
+            capsuleBuffer = new ComputeBuffer(Mathf.Max(1, capsuleData.Length), Marshal.SizeOf<Capsule>());
+        }
+
+        if (capsuleData.Length > 0)
+        {
+            capsuleBuffer.SetData(capsuleData);
+            CapsuleCounter = capsuleData.Length;
+        }
+    }
 
     public void Simulate(float dt)
     {
@@ -371,6 +460,7 @@ public class GPUCloth : MonoBehaviour
             #region CollisionPrimitiveUpdating
 
             updateSphereBuffer();
+            updateCapsuleBuffer();
 
             #endregion CollisionPrimitiveUpdating
 
@@ -483,6 +573,32 @@ public class GPUCloth : MonoBehaviour
 
                 #endregion SphereCollision
 
+                #region CapsuleCollision
+
+                int capsuleKernel = capsuleCollisionCompute.FindKernel("CapsuleCloth");
+
+                capsuleCollisionCompute.SetBuffer(capsuleKernel, "Particles", particleBuffer);
+
+                capsuleCollisionCompute.SetBuffer(capsuleKernel, "PositionDeltas", deltaBuffer);
+
+                capsuleCollisionCompute.SetBuffer(capsuleKernel, "Capsules", capsuleBuffer);
+
+                capsuleCollisionCompute.SetInt("numParticles", config.Width * config.Height);
+
+                capsuleCollisionCompute.SetInt("numIterations", config.Iterations);
+
+                capsuleCollisionCompute.SetInt("numSubSteps", config.Substeps);
+
+                capsuleCollisionCompute.SetInt("numCapsules", CapsuleCounter);
+
+                capsuleCollisionCompute.SetFloat("dt", dt);
+
+                capsuleCollisionCompute.SetFloat("Spacing", config.Spacing);
+
+                capsuleCollisionCompute.Dispatch(capsuleKernel, particleGroups, 1, 1);
+
+                #endregion CapsuleCollision
+
                 #region ApplyDeltas
 
                 int deltasKernal = deltasCompute.FindKernel("ApplyDeltas");
@@ -579,6 +695,20 @@ public struct Sphere
     public float3 velocity;
     public float pad1;
 }
+
+[StructLayout(LayoutKind.Sequential)]
+public struct Capsule
+{
+    public float3 hemisphereA;
+    public float radius;
+
+    public float3 hemisphereB;
+    public float pad;
+
+    public float3 velocity;
+    public float pad1;
+};
+
 public enum SpringType
 {
     Vertical = 0,

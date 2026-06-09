@@ -1,10 +1,11 @@
-#pragma kernel SphereCloth
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CapsuleCloth
 
 #include "ClothCommon.hlsl"
 
-RWStructuredBuffer<Particle> Particles : register(u0);
-RWByteAddressBuffer PositionDeltas : register(u1);
-StructuredBuffer<Sphere> Spheres : register(t0);
+RWStructuredBuffer<Particle> Particles;
+RWByteAddressBuffer PositionDeltas;
+StructuredBuffer<Capsule> Capsules;
 
 float collisionDamping = 0.1f;
 float collisionCompliance = 0.0f;
@@ -38,12 +39,12 @@ void AtomicAddFloat3(uint index, float3 v)
 uint numParticles;
 uint numIterations;
 uint numSubSteps;
-uint numSpheres;
+uint numCapsules;
 float dt;
 float Spacing;
 
 [numthreads(256, 1, 1)]
-void SphereCloth(uint id : SV_DispatchThreadID)
+void CapsuleCloth(uint id : SV_DispatchThreadID)
 {
     if (id >= numParticles)
         return;
@@ -59,33 +60,43 @@ void SphereCloth(uint id : SV_DispatchThreadID)
     float dt_comp = dt / numSubSteps;
 
     
-    for (uint s = 0; s < numSpheres; ++s)
+    for (uint c = 0; c < numCapsules; ++c)
     {
-        Sphere col = Spheres[s];
+        Capsule col = Capsules[c];
 
-        float clothSubstepAlpha = 1.0f;
-        float alpha1 = clothSubstepAlpha;
-        float3 center = lerp(col.CenterPrevious, col.Center, alpha1);
-        float3 d = p.position - center;
-        
-        float distSq = dot(d, d);
+        float3 ab = col.hemisphereB - col.hemisphereA;
 
-        float R = col.radius + skinWidth;
-        if (distSq >= R * R)
+        float abLenSq = dot(ab, ab);
+
+        if (abLenSq < 1e-6f)
             continue;
 
-        float dist = sqrt(distSq);
+        float t = saturate(dot(p.position - col.hemisphereA, ab) / abLenSq);
+
+        float3 closestPoint = col.hemisphereA + ab * t;
+        
+        float3 d = p.position - closestPoint;
+        
+        float distanceDot = dot(d, d);
+        
+        float radi = col.radius + skinWidth;
+        
+        if (distanceDot >= radi * radi)
+            continue;
+        
+        float dist = sqrt(distanceDot);
+        
         if (dist < 1e-6f)
             continue;
-
-        float3 rawN = d / dist;
-        float3 n = rawN;
-        p.prevCollisionNormal = n;
-        float penetration = R - dist;
-
+        
+        float3 n = d / dist;
+        
+        float penetration = radi - dist;
+        
+        
         float wCloth = p.invMass;
-        float wSphere = 0;
-        float wSum = wCloth + wSphere;
+        float wCapsule = 0;
+        float wSum = wCloth + wCapsule;
 
         float alpha = collisionCompliance / (dt_comp * dt_comp);
 
