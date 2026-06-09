@@ -1,0 +1,106 @@
+#pragma kernel SphereCloth
+
+#include "ClothCommon.hlsl"
+
+RWStructuredBuffer<Particle> Particles : register(u0);
+RWByteAddressBuffer PositionDeltas : register(u1);
+StructuredBuffer<Sphere> Spheres : register(t0);
+
+float collisionDamping = 0.1f;
+float collisionCompliance = 0.0f;
+
+void AtomicAddFloat(uint addr, float value)
+{
+    uint expected = PositionDeltas.Load(addr);
+    for (;;)
+    {
+        float oldVal = asfloat(expected);
+        float newVal = oldVal + value;
+        uint desired = asuint(newVal);
+
+        uint original;
+        PositionDeltas.InterlockedCompareExchange(addr, expected, desired, original);
+
+        if (original == expected)
+            break;
+
+        expected = original;
+    }
+}
+
+void AtomicAddFloat3(uint index, float3 v)
+{
+    AtomicAddFloat(AddressOf(index, 0), v.x);
+    AtomicAddFloat(AddressOf(index, 1), v.y);
+    AtomicAddFloat(AddressOf(index, 2), v.z);
+}
+
+uint numParticles;
+uint numIterations;
+uint numSubSteps;
+uint numSpheres;
+float dt;
+float Spacing;
+
+[numthreads(256, 1, 1)]
+void SphereCloth(uint id : SV_DispatchThreadID)
+{
+    if (id >= numParticles)
+        return;
+    
+    float skinWidth = Spacing * 0.25f;
+
+    Particle p = Particles[id];
+    if (p.invMass == 0.0f)
+        return;
+
+    float3 pos = p.position;
+
+    float dt_comp = dt / numSubSteps;
+
+    
+    for (uint s = 0; s < numSpheres; ++s)
+    {
+        Sphere col = Spheres[s];
+
+        float clothSubstepAlpha = 1.0f;
+        float alpha1 = clothSubstepAlpha;
+        float3 center = lerp(col.CenterPrevious, col.Center, alpha1);
+        float3 d = p.position - center;
+        
+        float distSq = dot(d, d);
+
+        float R = col.radius + skinWidth;
+        if (distSq >= R * R)
+            continue;
+
+        float dist = sqrt(distSq);
+        if (dist < 1e-6f)
+            continue;
+
+        float3 rawN = d / dist;
+        float3 n = rawN;
+        p.prevCollisionNormal = n;
+        float penetration = R - dist;
+
+        float wCloth = p.invMass;
+        float wSphere = 0;
+        float wSum = wCloth + wSphere;
+
+        float alpha = collisionCompliance / (dt_comp * dt_comp);
+
+        float lambda = penetration / (wSum + alpha);
+
+        float3 corr = lambda * n;
+
+        float3 vrel = p.velocity - col.velocity;
+
+        float normalVel = dot(vrel, n);
+        corr = min(length(corr), 0.1f) * n;
+        
+        AtomicAddFloat3(id, corr);
+    }
+    
+    Particles[id] = p;
+
+}

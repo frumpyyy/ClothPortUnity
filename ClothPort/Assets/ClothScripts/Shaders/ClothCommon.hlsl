@@ -8,13 +8,10 @@ struct Spring
 
     float restingLength;
     float compliance;
-
     float lambda;
-
+    float pad;
     uint isBroken;
     uint springType;
-
-    float pad;
 };
 
 struct Particle
@@ -30,6 +27,17 @@ struct Particle
     float3 prevCollisionNormal;
     float padding4;
 };
+
+struct Sphere
+{
+    float3 Center;
+    float radius;
+    float3 CenterPrevious;
+    float pad;
+    float3 velocity;
+    float pad1;
+};
+
 
 uint AddressOf(uint index, uint component)
 {

@@ -33,6 +33,7 @@ void AtomicAddFloat3(uint index, float3 v)
 }
 
 uint numSprings;
+uint numSubsteps;
 float dt;
 float compliance;
 float damping;
@@ -64,7 +65,8 @@ void SolveSprings(uint id : SV_DispatchThreadID)
     if (wsum == 0)
         return;
     
-    float alpha = (s.compliance * compliance) / (dt * dt);
+    float comp_dt = dt / numSubsteps;
+    float alpha = (s.compliance * compliance) / (comp_dt * comp_dt);
 
     float gamma = damping;
     

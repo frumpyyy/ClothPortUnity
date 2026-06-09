@@ -1,4 +1,3 @@
-using NUnit.Framework;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Unity.Mathematics;
@@ -14,20 +13,9 @@ public class GPUCloth : MonoBehaviour
     public ComputeShader resetLamdaCompute;
     public ComputeShader velocityCompute;
     public ComputeShader normalsCompute;
+    public ComputeShader sphereCollisionCompute;
 
-
-    public int Width = 30;
-    public int Height = 30;
-
-    public float Spacing = 1.0f;
-
-    public float Friction = 0.7f;
-
-    public float Damping = 0.7f;
-
-    public float ClothComplianceMultiplier = 1.0f;
-
-    public Vector3 gravity = new Vector3(0, -9.81f, 0);
+    [SerializeField] private ClothConfig config;
 
     ComputeBuffer particleBuffer;
 
@@ -37,16 +25,16 @@ public class GPUCloth : MonoBehaviour
 
     ComputeBuffer normalBuffer;
 
-    public int Iterations = 8;
-    public int Substeps = 2;
-
-    public float Clothcompilance = 0.0005f;
-
     GraphicsBuffer indexBuffer;
+
     ComputeBuffer drawArgsBuffer;
+
+    ComputeBuffer sphereBuffer;
 
     [SerializeField]
     private Material clothMaterial;
+
+    private int SphereCounter = 0;
 
     void Start()
     {
@@ -65,14 +53,12 @@ public class GPUCloth : MonoBehaviour
 
         Debug.Log("Particle Count: " + particleBuffer.count);
         Debug.Log("Index Count: " + indexBuffer.count);
-    }
 
-    void FixedUpdate()
-    {
-        Simulate(Time.fixedDeltaTime);
-
+        if (ClothManager.instance != null)
+            ClothManager.instance.RegisterCloth(this);
 
     }
+
 
     void Update()
     {
@@ -88,25 +74,29 @@ public class GPUCloth : MonoBehaviour
 
     void OnDestroy()
     {
+        if (ClothManager.instance != null)
+            ClothManager.instance.UnregisterCloth(this);
+
         particleBuffer?.Release();
         springBuffer?.Release();
         deltaBuffer?.Release();
         indexBuffer?.Release();
         drawArgsBuffer?.Release();
         normalBuffer?.Release();
+        sphereBuffer?.Release();
     }
 
     void CreateRenderBuffers()
     {
         List<uint> indices = new();
 
-        for (int y = 0; y < Height - 1; y++)
+        for (int y = 0; y < config.Height - 1; y++)
         {
-            for (int x = 0; x < Width - 1; x++)
+            for (int x = 0; x < config.Width - 1; x++)
             {
-                uint i0 = (uint)(y * Width + x);
+                uint i0 = (uint)(y * config.Width + x);
                 uint i1 = i0 + 1;
-                uint i2 = i0 + (uint)Width;
+                uint i2 = i0 + (uint)config.Width;
                 uint i3 = i2 + 1;
 
                 indices.Add(i0);
@@ -144,14 +134,14 @@ public class GPUCloth : MonoBehaviour
 
     void CreateParticles()
     {
-        Particle[] particles = new Particle[Width * Height];
-        for (int y = 0; y < Height; y++)
+        Particle[] particles = new Particle[config.Width * config.Height];
+        for (int y = 0; y < config.Height; y++)
         {
-            for (int x = 0; x < Width; x++)
+            for (int x = 0; x < config.Width; x++)
             {
-                int i = y * Width + x;
+                int i = y * config.Width + x;
 
-                particles[i].position = new Vector3(x * Spacing, 0, y * Spacing);
+                particles[i].position = new Vector3(x * config.Spacing, 0, y * config.Spacing);
 
                 particles[i].prevPosition = particles[i].position;
 
@@ -160,7 +150,7 @@ public class GPUCloth : MonoBehaviour
         }
 
         particles[0].invMass = 0;
-        particles[Width - 1].invMass = 0;
+        particles[config.Width - 1].invMass = 0;
 
         int stride = Marshal.SizeOf<Particle>();
 
@@ -168,13 +158,13 @@ public class GPUCloth : MonoBehaviour
 
         particleBuffer.SetData(particles);
 
-        deltaBuffer = new ComputeBuffer(Width * Height * 3, sizeof(float), ComputeBufferType.Raw);
+        deltaBuffer = new ComputeBuffer(config.Width * config.Height * 3, sizeof(float), ComputeBufferType.Raw);
 
-        float[] zeros = new float[Width * Height * 3];
+        float[] zeros = new float[config.Width * config.Height * 3];
 
         deltaBuffer.SetData(zeros);
 
-        normalBuffer = new ComputeBuffer(Width * Height, sizeof(float) * 3);
+        normalBuffer = new ComputeBuffer(config.Width * config.Height, sizeof(float) * 3);
 
     }
 
@@ -184,11 +174,11 @@ public class GPUCloth : MonoBehaviour
 
         #region structural
         //horizontal structure springs
-        for (int y = 0; y < Height; y++)
+        for (int y = 0; y < config.Height; y++)
         {
-            for (int x = 0; x < Width - 1; x++)
+            for (int x = 0; x < config.Width - 1; x++)
             {
-                int a = y * Width + x;
+                int a = y * config.Width + x;
                 int b = a + 1;
 
                 Spring s = new Spring();
@@ -196,9 +186,9 @@ public class GPUCloth : MonoBehaviour
                 s.particleA = a;
                 s.particleB = b;
 
-                s.restingLength = Spacing;
+                s.restingLength = config.Spacing;
 
-                s.compliance = Clothcompilance;
+                s.compliance = config.Clothcompilance;
 
                 s.lambda = 0.0f;
 
@@ -209,21 +199,21 @@ public class GPUCloth : MonoBehaviour
         }
 
         //vertical structured springs
-        for (int y = 0; y < Height - 1; y++)
+        for (int y = 0; y < config.Height - 1; y++)
         {
-            for (int x = 0; x < Width; x++)
+            for (int x = 0; x < config.Width; x++)
             {
-                int a = y * Width + x;
-                int b = a + Width;
+                int a = y * config.Width + x;
+                int b = a + config.Width;
 
                 Spring s = new Spring();
 
                 s.particleA = a;
                 s.particleB = b;
 
-                s.restingLength = Spacing;
+                s.restingLength = config.Spacing;
 
-                s.compliance = Clothcompilance;
+                s.compliance = config.Clothcompilance;
 
                 s.lambda = 0.0f;
 
@@ -236,22 +226,22 @@ public class GPUCloth : MonoBehaviour
         #endregion structural
 
         #region shearing
-        for (int y = 0; y < Height - 1; y++)
+        for (int y = 0; y < config.Height - 1; y++)
         {
-            for (int x = 0; x < Width - 1; x++)
+            for (int x = 0; x < config.Width - 1; x++)
             {
                 {
-                    int a = y * Width + x;
-                    int b = (y + 1) * Width + (x + 1);
+                    int a = y * config.Width + x;
+                    int b = (y + 1) * config.Width + (x + 1);
 
                     Spring s = new Spring();
 
                     s.particleA = a;
                     s.particleB = b;
 
-                    s.restingLength = Spacing * Mathf.Sqrt(2.0f);
+                    s.restingLength = config.Spacing * Mathf.Sqrt(2.0f);
 
-                    s.compliance = Clothcompilance * 0.7f;
+                    s.compliance = config.Clothcompilance * 0.7f;
                     s.lambda = 0.0f;
 
                     s.springType = (int)SpringType.Shearing;
@@ -260,17 +250,17 @@ public class GPUCloth : MonoBehaviour
                 }
 
                 {
-                    int a = y * Width + (x + 1);
-                    int b = (y + 1) * Width + x;
+                    int a = y * config.Width + (x + 1);
+                    int b = (y + 1) * config.Width + x;
 
                     Spring s = new Spring();
 
                     s.particleA = a;
                     s.particleB = b;
 
-                    s.restingLength = Spacing * Mathf.Sqrt(2.0f);
+                    s.restingLength = config.Spacing * Mathf.Sqrt(2.0f);
 
-                    s.compliance = Clothcompilance * 0.7f;
+                    s.compliance = config.Clothcompilance * 0.7f;
                     s.lambda = 0.0f;
 
                     s.springType = (int)SpringType.Shearing;
@@ -282,11 +272,11 @@ public class GPUCloth : MonoBehaviour
         #endregion shearing 
 
         #region bending
-        for (int y = 0; y < Height; y++)
+        for (int y = 0; y < config.Height; y++)
         {
-            for (int x = 0; x < Width - 2; x++)
+            for (int x = 0; x < config.Width - 2; x++)
             {
-                int a = y * Width + x;
+                int a = y * config.Width + x;
                 int b = a + 2;
 
                 Spring s = new Spring();
@@ -294,9 +284,9 @@ public class GPUCloth : MonoBehaviour
                 s.particleA = a;
                 s.particleB = b;
 
-                s.restingLength = Spacing * 2.0f;
+                s.restingLength = config.Spacing * 2.0f;
 
-                s.compliance = Clothcompilance * 0.5f;
+                s.compliance = config.Clothcompilance * 0.5f;
                 s.lambda = 0.0f;
 
                 s.springType = (int)SpringType.Bending;
@@ -304,21 +294,21 @@ public class GPUCloth : MonoBehaviour
                 springs.Add(s);
             }
         }
-        for (int y = 0; y < Height - 2; y++)
+        for (int y = 0; y < config.Height - 2; y++)
         {
-            for (int x = 0; x < Width; x++)
+            for (int x = 0; x < config.Width; x++)
             {
-                int a = y * Width + x;
-                int b = a + Width * 2;
+                int a = y * config.Width + x;
+                int b = a + config.Width * 2;
 
                 Spring s = new Spring();
 
                 s.particleA = a;
                 s.particleB = b;
 
-                s.restingLength = Spacing * 2.0f;
+                s.restingLength = config.Spacing * 2.0f;
 
-                s.compliance = Clothcompilance * 0.5f;
+                s.compliance = config.Clothcompilance * 0.5f;
                 s.lambda = 0.0f;
 
                 s.springType = (int)SpringType.Bending;
@@ -337,10 +327,53 @@ public class GPUCloth : MonoBehaviour
         Debug.Log($"Created {springs.Count} springs");
     }
 
-    void Simulate(float dt)
+    void updateSphereBuffer()
     {
-        for (int x = 0; x < Substeps; x++)
+        SphereCollider[] colliders = FindObjectsByType<SphereCollider>();
+
+        Sphere[] sphereData = new Sphere[colliders.Length];
+
+        for (int i = 0; i < colliders.Length; i++)
         {
+            SphereCollider sphereColl = colliders[i];
+
+            float sphereScale = Mathf.Max(sphereColl.transform.lossyScale.x,
+                sphereColl.transform.lossyScale.y, sphereColl.transform.lossyScale.z);
+
+            sphereData[i].Center = sphereColl.transform.TransformPoint(sphereColl.center);
+
+            sphereData[i].CenterPrevious = sphereData[i].Center;
+
+            sphereData[i].radius = sphereColl.radius * sphereScale;
+
+            sphereData[i].velocity = float3.zero; // not integrating velo for now going to get simpler coll working
+
+        }
+
+        if (sphereBuffer == null || sphereBuffer.count != Mathf.Max(1, sphereData.Length))
+        {
+            sphereBuffer?.Release();
+
+            sphereBuffer = new ComputeBuffer(Mathf.Max(1, sphereData.Length), Marshal.SizeOf<Sphere>());
+        }
+
+        if (sphereData.Length > 0)
+        {
+            sphereBuffer.SetData(sphereData);
+            SphereCounter = sphereData.Length;
+        }
+    }
+
+    public void Simulate(float dt)
+    {
+        for (int x = 0; x < config.Substeps; x++)
+        {
+            #region CollisionPrimitiveUpdating
+
+            updateSphereBuffer();
+
+            #endregion CollisionPrimitiveUpdating
+
             #region ResetLambda
             int resetLamdaKernel = resetLamdaCompute.FindKernel("ResetKernel");
 
@@ -363,14 +396,14 @@ public class GPUCloth : MonoBehaviour
 
             normalsCompute.SetBuffer(normalKernel, "OutNormals", normalBuffer);
 
-            normalsCompute.SetInt("numParticles", Width * Height);
+            normalsCompute.SetInt("numParticles", config.Width * config.Height);
 
-            normalsCompute.SetInt("clothWidth", Width);
+            normalsCompute.SetInt("clothWidth", config.Width);
 
-            normalsCompute.SetInt("clothHeight", Height);
+            normalsCompute.SetInt("clothHeight", config.Height);
 
             //shader dispatch group sizing
-            int particleGroups = Mathf.CeilToInt(Width * Height / 256.0f);
+            int particleGroups = Mathf.CeilToInt(config.Width * config.Height / 256.0f);
 
             normalsCompute.Dispatch(normalKernel, particleGroups, 1, 1);
 
@@ -383,18 +416,18 @@ public class GPUCloth : MonoBehaviour
             integrateCompute.SetBuffer(kernel, "Particles", particleBuffer);
 
             //compute shader var setting
-            integrateCompute.SetFloat("dt", dt / Substeps);
+            integrateCompute.SetFloat("dt", dt / config.Substeps);
 
-            integrateCompute.SetInt("numParticles", Width * Height);
+            integrateCompute.SetInt("numParticles", config.Width * config.Height);
 
-            integrateCompute.SetVector("gravity", gravity);
+            integrateCompute.SetVector("gravity", config.gravity);
 
             //diatpch integration shader
             integrateCompute.Dispatch(kernel, particleGroups, 1, 1);
 
             #endregion Integrate
 
-            for (int i = 0; i < Iterations; i++)
+            for (int i = 0; i < config.Iterations; i++)
             {
                 #region SolveSprings
 
@@ -410,16 +443,45 @@ public class GPUCloth : MonoBehaviour
                 //compute shader var setting
                 springCompute.SetInt("numSprings", springBuffer.count);
 
-                springCompute.SetFloat("dt", dt / (Substeps * Iterations));
+                springCompute.SetInt("numSubsteps", config.Substeps);
 
-                springCompute.SetFloat("compliance", ClothComplianceMultiplier);
+                springCompute.SetFloat("dt", dt);
 
-                springCompute.SetFloat("damping", Damping);
+                springCompute.SetFloat("compliance", config.ClothComplianceMultiplier);
+
+                springCompute.SetFloat("damping", config.Damping);
 
                 //dispatch solve springs shaders
                 springCompute.Dispatch(springKernel, solveSpringsGroup, 1, 1);
 
                 #endregion SolveSprings
+
+                #region SphereCollision
+
+                int sphereKernel = sphereCollisionCompute.FindKernel("SphereCloth");
+
+                sphereCollisionCompute.SetBuffer(sphereKernel, "Particles", particleBuffer);
+
+                sphereCollisionCompute.SetBuffer(sphereKernel, "PositionDeltas", deltaBuffer);
+
+                sphereCollisionCompute.SetBuffer(sphereKernel, "Spheres", sphereBuffer);
+
+                sphereCollisionCompute.SetInt("numParticles", config.Width * config.Height);
+
+                sphereCollisionCompute.SetInt("numIterations", config.Iterations);
+
+                sphereCollisionCompute.SetInt("numSubSteps", config.Substeps);
+
+                sphereCollisionCompute.SetInt("numSpheres", SphereCounter);
+
+                sphereCollisionCompute.SetFloat("dt", dt);
+
+                sphereCollisionCompute.SetFloat("Spacing", config.Spacing);
+
+                //dispatch solve springs shaders
+                sphereCollisionCompute.Dispatch(sphereKernel, particleGroups, 1, 1);
+
+                #endregion SphereCollision
 
                 #region ApplyDeltas
 
@@ -431,7 +493,7 @@ public class GPUCloth : MonoBehaviour
                 deltasCompute.SetBuffer(deltasKernal, "PositionDeltas", deltaBuffer);
 
                 //compute shader var setting
-                deltasCompute.SetInt("numParticles", Width * Height);
+                deltasCompute.SetInt("numParticles", config.Width * config.Height);
 
                 //dispatch apply deltas shader
                 deltasCompute.Dispatch(deltasKernal, particleGroups, 1, 1);
@@ -449,17 +511,17 @@ public class GPUCloth : MonoBehaviour
             velocityCompute.SetBuffer(velocityKernal, "Particles", particleBuffer);
 
             //compute shader var setting
-            velocityCompute.SetInt("numParticles", Width * Height);
+            velocityCompute.SetInt("numParticles", config.Width * config.Height);
 
-            velocityCompute.SetInt("numSubSteps", Substeps);
+            velocityCompute.SetInt("numSubSteps", config.Substeps);
 
             velocityCompute.SetFloat("dt", dt);
 
-            velocityCompute.SetFloat("friction", Friction);
+            velocityCompute.SetFloat("friction", config.Friction);
 
-            velocityCompute.SetFloat("damping", Damping);
+            velocityCompute.SetFloat("damping", config.Damping);
 
-            int particleGroups1 = Mathf.CeilToInt(Width * Height / 256.0f);
+            int particleGroups1 = Mathf.CeilToInt(config.Width * config.Height / 256.0f);
 
             //dispatch apply deltas shader
             velocityCompute.Dispatch(velocityKernal, particleGroups1, 1, 1);
@@ -477,15 +539,15 @@ public class GPUCloth : MonoBehaviour
 [StructLayout(LayoutKind.Sequential)]
 public struct Particle
 {
-    public Vector3 position;
+    public float3 position;
     float padding1;
-    public Vector3 prevPosition;
+    public float3 prevPosition;
     float padding2;
-    public Vector3 velocity;
+    public float3 velocity;
     public float invMass;
-    public Vector3 accumulatedForce;
+    public float3 accumulatedForce;
     float padding3;
-    public Vector3 prevCollisionNormal;
+    public float3 prevCollisionNormal;
     float padding4;
 
 }
@@ -498,13 +560,24 @@ public struct Spring
 
     public float restingLength;
     public float compliance;
-
     public float lambda;
+    public float pad;
 
     public int isBroken;
     public int springType;
+}
 
+[StructLayout(LayoutKind.Sequential)]
+public struct Sphere
+{
+    public float3 Center;
+    public float radius;
+
+    public float3 CenterPrevious;
     public float pad;
+
+    public float3 velocity;
+    public float pad1;
 }
 public enum SpringType
 {
