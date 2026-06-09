@@ -1,0 +1,1 @@
+Porting my C++ HLSL Cloth from my own physics engine into unity C# and compute shaders, the eventual goal is to create a plugin style drop in cloth system for both unity and unreal, however this project is currently unity focused.
