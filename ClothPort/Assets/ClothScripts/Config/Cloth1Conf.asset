@@ -12,13 +12,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: bfc199525ae98974ab4d59299194f6fe, type: 3}
   m_Name: Cloth1Conf
   m_EditorClassIdentifier: Assembly-CSharp::ClothConfig
-  Width: 30
-  Height: 30
-  Spacing: 1
+  Width: 90
+  Height: 90
+  Spacing: 0.1
   Friction: 0.7
   Damping: 0.7
   ClothComplianceMultiplier: 1
-  gravity: {x: -0.04, y: -9.81, z: 0}
+  gravity: {x: -0.04, y: -9.81, z: 2}
   Iterations: 8
-  Substeps: 2
+  Substeps: 4
   Clothcompilance: 0.0005

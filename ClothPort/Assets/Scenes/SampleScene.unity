@@ -525,6 +525,8 @@ MonoBehaviour:
   resetLamdaCompute: {fileID: 7200000, guid: f1bda20dcf314654f81da1e4eeaca5cd, type: 3}
   velocityCompute: {fileID: 7200000, guid: f2668373ef3265744a7675ca9b54a114, type: 3}
   normalsCompute: {fileID: 7200000, guid: 0a3299d4cf1fe1343b600ed712f11191, type: 3}
+  sphereCollisionCompute: {fileID: 7200000, guid: 080236256c426434696aed270ef6b2d8, type: 3}
+  capsuleCollisionCompute: {fileID: 7200000, guid: bf7b896093174b249a6791501cd429eb, type: 3}
   config: {fileID: 11400000, guid: 2776d5eb628b13f46828bdfdf031a37a, type: 2}
   clothMaterial: {fileID: 2100000, guid: 85ed175557fff4542a23ea3ec51381d3, type: 2}
 --- !u!4 &999055695
